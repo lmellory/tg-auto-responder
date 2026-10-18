@@ -74,44 +74,37 @@ async def handle_private_message(event):
         return
 
     sender = await event.get_sender()
-    if not sender:
-        return
-
-    # Игнорируем ботов
-    if getattr(sender, "bot", False):
+    if not sender or getattr(sender, "bot", False):
         return
 
     sender_id = event.sender_id
+    text = (event.raw_text or "").strip().lower()
+    is_test_command = text in ("/test", "/reset", "тест", "test")
 
-    # КРИТИЧЕСКИ ВАЖНО: Проверяем, отвечали ли мы уже этому человеку
-    if sender_id in replied_users:
-        return
-
-    # Защита: проверяем историю переписки. Если в диалоге уже были сообщения ранее,
-    # значит это старый знакомый/клиент, автоответ не шлем.
+    # Проверяем историю переписки в этом чате
     try:
         messages = await client.get_messages(event.chat_id, limit=3)
-        # Если сообщений больше 1 (то есть были старые сообщения до этого), помечаем как отвеченного и выходим
-        if len(messages) > 1 and any(m.id != event.id for m in messages):
-            replied_users.add(sender_id)
-            save_replied()
-            return
     except Exception:
-        pass
+        messages = [event]
 
-    # Фиксируем, что пользователю ответили (чтобы больше НИКОГДА не повторять)
+    # Если в чате уже есть предыдущие сообщения (чат уже существует) и это не тест — не шлем
+    has_history = len(messages) > 1 and any(m.id != event.id for m in messages)
+    if has_history and not is_test_command:
+        return
+
+    # Если чат пустой / удален / первое сообщение: отправляем автоответ!
+    print(f"📩 Первое сообщение (чистый чат) от {getattr(sender, 'first_name', '')} (@{getattr(sender, 'username', '') or sender_id}). Отправляю автоответ...", flush=True)
+
+    # Фиксируем, что ответили
     replied_users.add(sender_id)
     save_replied()
 
-    print(f"📩 Новое первое сообщение от {sender.first_name} (@{sender.username or sender_id}). Отправляю автоответ...")
-
     try:
-        # Небольшая пауза 1-2 секунды для имитации живого присутствия
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(1.0)
         await event.reply(get_reply_text())
-        print(f"✅ Автоответ успешно отправлен пользователю {sender_id}")
+        print(f"✅ Автоответ успешно отправлен пользователю {sender_id}", flush=True)
     except Exception as e:
-        print(f"❌ Ошибка отправки автоответа пользователю {sender_id}: {e}")
+        print(f"❌ Ошибка отправки автоответа: {e}", flush=True)
 
 # Легковесный веб-сервер для бесплатного хостинга (Render, Koyeb, Hugging Face)
 async def init_web_server():
@@ -124,28 +117,23 @@ async def init_web_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"🌐 Health-check веб-сервер запущен на порту {PORT}")
+    print(f"🌐 Health-check веб-сервер запущен на порту {PORT}", flush=True)
 
 async def main():
-    print("🚀 Запуск Telegram Автоответчика...")
-    await client.start()
-    me = await client.get_me()
-    print(f"👤 Авторизован как: {me.first_name} (@{me.username or me.id})")
-
-    # При первом запуске подгружаем все существующие диалоги,
-    # чтобы скрипт НИКОГДА не отвечал вашим текущим друзьям и контактам
-    if len(replied_users) == 0:
-        print("🔍 Первичная калибровка: сканирую существующие диалоги, чтобы не писать старым контактам...")
-        count = 0
-        async for dialog in client.iter_dialogs():
-            if dialog.is_user and not getattr(dialog.entity, "bot", False):
-                replied_users.add(dialog.id)
-                count += 1
-        save_replied()
-        print(f"✅ Учтено {count} существующих контактов. Автоответ сработает ТОЛЬКО для новых людей!")
-
+    # 1. Запускаем веб-сервер в первую очередь, чтобы Render мгновенно увидел открытый порт (Live)
     await init_web_server()
-    print("🟢 Автоответчик активен и слушает входящие сообщения...")
+    print("🚀 Запуск Telegram Автоответчика...", flush=True)
+
+    # 2. Подключаемся к Telegram
+    await client.connect()
+    if not await client.is_user_authorized():
+        print("❌ ОШИБКА: Авторизация не удалась! Проверьте значение SESSION_STRING в Render Environment.", flush=True)
+        while True:
+            await asyncio.sleep(3600)
+
+    me = await client.get_me()
+    print(f"👤 Авторизован как: {me.first_name} (@{me.username or me.id})", flush=True)
+    print("🟢 Автоответчик активен! Если чат новый или пустой — автоответ сработает мгновенно.", flush=True)
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
