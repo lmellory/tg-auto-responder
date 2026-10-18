@@ -20,7 +20,8 @@ load_dotenv()
 
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
-SESSION_STRING = os.getenv("SESSION_STRING", "")
+raw_session = os.getenv("SESSION_STRING", "")
+SESSION_STRING = raw_session.strip().strip('"').strip("'").replace("\n", "").replace("\r", "").replace(" ", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "secretary_mellorybot").replace("@", "").strip()
 PORT = int(os.getenv("PORT", 8080))
 
