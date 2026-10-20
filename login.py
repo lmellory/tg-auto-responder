@@ -1,61 +1,52 @@
 #!/usr/bin/env python3
-"""
-Скрипт для надёжной генерации SESSION_STRING.
-Сохраняет проверенную строку сессии в файл session_string.txt
-после полного завершения авторизации и миграции на ваш дата-центр Telegram.
-"""
-
+"""Create and verify a Telegram session without printing credentials."""
 import os
+from getpass import getpass
 from pathlib import Path
 from dotenv import load_dotenv
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 
-load_dotenv()
 
-api_id = os.getenv("API_ID")
-api_hash = os.getenv("API_HASH")
+def main():
+    project_dir = Path(__file__).resolve().parent
+    load_dotenv(project_dir / '.env')
+    api_id = os.getenv('API_ID')
+    api_hash = os.getenv('API_HASH')
+    if not api_id or not api_hash:
+        print('API_ID и API_HASH доступны на https://my.telegram.org в API development tools.')
+        api_id = input('API_ID: ').strip()
+        api_hash = getpass('API_HASH (ввод скрыт): ').strip()
+    api_id = int(api_id)
+    print('Подключаюсь к Telegram. Код и пароль вводите только в этом окне.')
+    client = TelegramClient(StringSession(), api_id, api_hash)
+    try:
+        client.start(
+            phone=lambda: input('Номер телефона с кодом страны: ').strip(),
+            code_callback=lambda: getpass('Код входа из Telegram (ввод скрыт): ').strip(),
+            password=lambda: getpass('Пароль двухэтапной проверки (ввод скрыт): '),
+        )
+        client.get_me()
+        session_str = client.session.save()
+    finally:
+        client.disconnect()
+    print('Проверяю новую сессию...')
+    verifier = TelegramClient(StringSession(session_str), api_id, api_hash)
+    try:
+        verifier.connect()
+        if not verifier.is_user_authorized():
+            raise RuntimeError('Telegram не подтвердил новую сессию. Файл не изменён.')
+        verifier.get_me()
+    finally:
+        verifier.disconnect()
+    output_file = project_dir / 'session_string.txt'
+    temporary = project_dir / 'session_string.txt.tmp'
+    temporary.write_text(session_str.strip(), encoding='utf-8')
+    temporary.replace(output_file)
+    print(f'Вход подтверждён. Новая сессия сохранена: {output_file}')
+    print('Замените SESSION_STRING в Render Environment содержимым этого файла.')
+    print('Не отправляйте строку сессии в чат и не загружайте её в GitHub.')
 
-if not api_id or not api_hash:
-    print("👉 Получите API_ID и API_HASH на сайте https://my.telegram.org (раздел API development tools)")
-    api_id = input("Введите ваш API_ID: ").strip()
-    api_hash = input("Введите ваш API_HASH: ").strip()
 
-api_id = int(api_id)
-
-print("\nПодключаюсь к Telegram...")
-client = TelegramClient(StringSession(), api_id, api_hash)
-client.start()
-
-# Запрашиваем информацию об аккаунте (это гарантирует завершение миграции на ваш рабочий DC)
-me = client.get_me()
-
-# Сохраняем сессию ТОЛЬКО ПОСЛЕ успешного get_me()
-session_str = client.session.save()
-
-# Проверяем строку сессии тестовым подключением
-print("Проверяю валидность сессии...")
-verifier = TelegramClient(StringSession(session_str), api_id, api_hash)
-verifier.connect()
-if not verifier.is_user_authorized():
-    print("⚠️ Повторная синхронизация ключа...")
-    verifier.start()
-    session_str = verifier.session.save()
-verifier.disconnect()
-
-client.disconnect()
-
-# Записываем в отдельный файл session_string.txt без переносов строк
-output_file = Path("session_string.txt")
-with open(output_file, "w", encoding="utf-8") as f:
-    f.write(session_str.strip())
-
-print("\n" + "=" * 65)
-print(f"🎉 УСПЕШНО АВТОРИЗОВАН: {me.first_name} (@{me.username})")
-print("=" * 65)
-print(f"\n✅ Строка сессии сохранена в файл: {output_file.resolve()}")
-print("Оттуда её можно скопировать без пробелов и без переносов строк!\n")
-print("-" * 65)
-print(session_str)
-print("-" * 65)
-print("\n👉 Скопируйте это значение в Render (переменная SESSION_STRING).")
+if __name__ == '__main__':
+    main()

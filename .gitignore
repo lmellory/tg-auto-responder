@@ -1,7 +1,10 @@
 .env
+session_string.txt
 replied_users.json
+replied_users.json.tmp
 user_session.session
 user_session.session-journal
 __pycache__/
 *.pyc
 .DS_Store
+session_string.txt.tmp
